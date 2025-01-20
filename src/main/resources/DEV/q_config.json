@@ -1,0 +1,11 @@
+{
+  "DEV.QUEUE.1": {
+    "qmgrList": ["QM1"]
+  },
+  "DEV.QUEUE.2": {
+    "qmgrList": ["QM1"]
+  },
+  "DEV.QUEUE.3": {
+    "qmgrList": ["QM1"]
+  }
+}

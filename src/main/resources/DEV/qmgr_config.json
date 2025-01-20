@@ -1,0 +1,11 @@
+{
+  "QM1": {
+    "host": "127.0.0.1",
+    "port": "1414",
+    "channel": "DEV.APP.SVRCONN",
+    "user_id": "app",
+    "password": "passw0rd",
+    "cluster": "",
+    "env": "DEV"
+  }
+}
