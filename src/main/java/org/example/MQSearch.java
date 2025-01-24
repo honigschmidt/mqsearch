@@ -17,6 +17,7 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -27,30 +28,34 @@ public final class MQSearch {
     static String queueManagerName = "";
     static List<String> queueNameList = new ArrayList<>();
     static List<String> queueManagerNameList = new ArrayList<>();
-    static int queueNameListMaxLength = 4;
     static String defEnv = "DEV";
     static String qmgrConfigResourceName = "qmgr_config.json";
     static String qConfigResourceName = "q_config.json";
     static JsonNode qmgrConfig = null;
     static JsonNode qConfig = null;
     static String env = null;
-
     static String qmgrArrayName = "qmgrList";
     static Hashtable<String, Object> qmgrProperties = new Hashtable<>();
-
     static List<String> searchParameterList = new ArrayList<>();
-    static int searchParameterListMaxLength = 3;
+    static int searchParameterListMaxLength = 4;
     static LocalDateTime searchDateTimeFrom = null;
     static LocalDateTime searchDateTimeTo = null;
     static boolean writeMessageToFile = false;
     static boolean browseError = false;
     static int messageCounter = 1;
     static int foundMessageCounter = 0;
+    static int addCounter = 0;
     static boolean foundInQueue;
-
-    static String release = "1.0 20-01-2025";
-    static String clientLib = "IBM MQ Java 9.4.1.1";
-
+    static String release = "1.04 24-01-2025";
+    static String clientLib = "9.4.1.1";
+    static String about = "https://github.com/honigschmidt/mqsearch";
+    static String logo = "\n" +
+            " __  __  ____   _____                     _     \n" +
+            "|  \\/  |/ __ \\ / ____|                   | |    \n" +
+            "| \\  / | |  | | (___   ___  __ _ _ __ ___| |__  \n" +
+            "| |\\/| | |  | |\\___ \\ / _ \\/ _` | '__/ __| '_ \\ \n" +
+            "| |  | | |__| |____) |  __/ (_| | | | (__| | | |\n" +
+            "|_|  |_|\\___\\_\\_____/ \\___|\\__,_|_|  \\___|_| |_|\n";
     static final String XMLFileExtension = ".xml";
     static final String JSONFileExtension = ".json";
     static final String rawFileExtension = ".txt";
@@ -66,12 +71,15 @@ public final class MQSearch {
 
         while (true) {
             System.out.print("\n");
-            System.out.print("\nMQSearch " + release + " | " + clientLib);
-            System.out.print("\nSelected environment: " + env);
-            System.out.print("\nSelected queues: ");
+            System.out.print(logo);
+            System.out.print("---");
+            System.out.print("\nEnvironment: " + env);
+            System.out.print("\n---");
+            System.out.print("\nQueues on searchlist");
             if (queueNameList.isEmpty()) {
-                System.out.print("none");
+                System.out.print(": none");
             } else {
+                System.out.print(" (" + queueNameList.size() + "): ");
                 for (int i = 0; i < queueNameList.size(); i++) {
                     System.out.print(queueNameList.get(i));
                     if (i + 1 != queueNameList.size()) {
@@ -82,19 +90,25 @@ public final class MQSearch {
                 }
             }
             System.out.print(
-                    "\n[q] Select queues" +
-                    "\n[l] Load queuelist from file" +
-                    "\n[s] Search messages" +
+                    "\n---" +
+                    "\n[a] Add queues to searchlist" +
+                    "\n[c] Clear searchlist" +
+                    "\n[l] Load queuenames from file" +
+                    "\n[s] Search for messages" +
                     "\n[e] Change environment" +
                     "\n[t] Test connection to queuemanager" +
                     "\n[m] Load test messages" +
+                    "\n[i] About" +
                     "\n[x] Exit"
             );
             System.out.print("\nSelect an option and press [ENTER]: ");
             String userInput = getUserInput();
             switch (userInput) {
-                case "q":
+                case "a":
                     selectQueues();
+                    break;
+                case "c":
+                    clearSearchlist();
                     break;
                 case "l":
                     loadQListFromFile();
@@ -110,6 +124,9 @@ public final class MQSearch {
                     break;
                 case "m":
                     loadTest();
+                    break;
+                case "i":
+                    about();
                     break;
                 case "x":
                     exitApplication();
@@ -192,7 +209,7 @@ public final class MQSearch {
                 Scanner scanner = new Scanner(fileContent);
                 while (scanner.hasNextLine()) {
                     String line = scanner.nextLine();
-                    if (!line.isBlank() && !line.contains("#")) {
+                    if (!line.isBlank() && !line.contains("#") && line.length() >= 6) {
                         if (line.charAt(6) == ' ') {
                             qNames.add(line.substring(7));
                         } else {
@@ -212,19 +229,20 @@ public final class MQSearch {
                 qNamesTemp.add(qName.trim());
             } else {
                 System.out.print("\nError: unknown queuename in file: " + qName + ".");
-                break;
             }
         }
-        if (qNamesTemp.size() == qNames.size()) {
+        if (!qNamesTemp.isEmpty()) {
             queueNameList.clear();
             for (String qName : qNamesTemp) {
                 queueNameList.add(qName);
             }
+        } else {
+            System.out.println("\nError: no queuename can be added from the selected file.");
         }
     }
 
     public static void testConnection() {
-        System.out.print("Enter name of the queuemanager and press [ENTER]: ");
+        System.out.print("\nEnter name of the queuemanager and press [ENTER]: ");
         queueManagerName = getUserInput();
         try {
             System.out.print("\nTrying to connect to " + queueManagerName);
@@ -243,103 +261,102 @@ public final class MQSearch {
     }
 
     public static void selectQueues() {
-        queueNameList.clear();
-        for (int i = 0; i < queueNameListMaxLength; i++) {
-            while (true) {
-                System.out.print("Enter a queuename to select and press [ENTER]: ");
-                String qName = getUserInput();
-                if (qName.isBlank() && queueNameList.isEmpty()) {
-                    System.out.print("Error: at least one queue must be selected.\n");
-                } else {
-                    if (!qName.isBlank()) {
-                        if (qConfig.has(qName)) {
-                            queueNameList.add(qName);
-                            break;
-                        } else {
-                            System.out.print("Error: unknown queuename.\n");
-                        }
-                    } else {
-                        break;
-                    }
+        addCounter = 0;
+        System.out.print("Enter a queuename or a part of it and press [ENTER]: ");
+        String qName = getUserInput().toUpperCase();
+        if (!qName.isBlank()) {
+            Iterator<String> qConfigIterator = qConfig.fieldNames();
+            qConfigIterator.forEachRemaining(fieldName -> {
+                if (fieldName.contains(qName) && !queueNameList.contains(fieldName)) {
+                    System.out.print("\n+ " + fieldName);
+                    queueNameList.add(fieldName);
+                    addCounter ++;
                 }
-            }
+            });
+            System.out.println();
         }
+        System.out.print("\nAdded " + addCounter + " queue(s) to searchlist.");
+    }
+
+    public static void clearSearchlist() {
+        queueNameList.clear();
     }
 
     public static void searchMessage() {
         if (queueNameList.isEmpty()) {
-            selectQueues();
-        }
-        searchParameterList.clear();
-        for (int i = 0; i < searchParameterListMaxLength; i++) {
-            System.out.print("Enter a search parameter or leave empty and press [ENTER]: ");
-            String userInput = getUserInput();
-            if (!userInput.isBlank()) {
-                searchParameterList.add(userInput);
-            }
-        }
-        DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("HHmmddMMyyyy");
-        while (true) {
-            System.out.print("\nEnter search dates from/to (hhmmddmmyyyy-hhmmddmmyyyy) or leave empty and press [ENTER]. Usable shorthands: [lasthour], [today]: ");
-            String timeStamp = getUserInput();
-            if (timeStamp.isBlank()) {
-                searchDateTimeFrom = null;
-                searchDateTimeTo = null;
-                break;
-            }
-            if (timeStamp.equals("lasthour")) {
-                searchDateTimeFrom = LocalDateTime.now().minusHours(1);
-                searchDateTimeTo = LocalDateTime.now();
-                break;
-            }
-            if (timeStamp.equals("today")) {
-                searchDateTimeFrom = LocalDateTime.now().minusDays(1);
-                searchDateTimeTo = LocalDateTime.now();
-                break;
-            }
-            int fromStart = 0;
-            int fromEnd = 12;
-            int toStart = 13;
-            int toEnd = 25;
-            try {
-                searchDateTimeFrom = LocalDateTime.parse(timeStamp.substring(fromStart, fromEnd), dateTimeFormatter);
-                searchDateTimeTo = LocalDateTime.parse(timeStamp.substring(toStart, toEnd), dateTimeFormatter);
-                if (searchDateTimeFrom.isBefore(searchDateTimeTo)) {
-                    break;
-                } else throw new RuntimeException();
-            } catch (RuntimeException e) {
-                System.out.print("\nError: invalid timestamp.");
-            }
-        }
-        System.out.print("\nSave messages to disk? Press [ENTER] to yes or any other key to no: ");
-        String userInput = getUserInput();
-        writeMessageToFile = userInput.isBlank();
-        messageCounter = 1;
-        foundMessageCounter = 0;
-        System.out.println(
-                "\nQueue names to check: " + queueNameList +
-                        "\nSearch parameters: " + searchParameterList +
-                        "\nSearch from: " + (Objects.isNull(searchDateTimeFrom) ? "n/a" : searchDateTimeFrom.format(dateTimeFormatter)) +
-                        "\nSearch to: " + (Objects.isNull(searchDateTimeTo) ? "n/a" : searchDateTimeTo.format(dateTimeFormatter)) +
-                        "\nSave to disk: " + (writeMessageToFile ? "yes" : "no"));
-        for (String qName : queueNameList) {
-            queueManagerNameList.clear();
-            queueName = qName;
-            JsonNode qmgrListNode = qConfig.at("/" + queueName).get(qmgrArrayName);
-            for (JsonNode qmgrNode : qmgrListNode) {
-                queueManagerNameList.add(qmgrNode.asText());
-            }
-            for (String qmgr : queueManagerNameList) {
-                queueManagerName = qmgr;
-                setConnectionProperties();
-                System.out.print("\nChecking " + queueName + " on " + queueManagerName + "\n");
-                browseQueue();
-                if (!foundInQueue && !browseError) {
-                    System.out.println("\nNo matching message(s) found in the queue " + queueName + ".");
+            System.out.print("\nError: no queues are selected.");
+        } else {
+            searchParameterList.clear();
+            for (int i = 0; i < searchParameterListMaxLength; i++) {
+                System.out.print("Enter a search parameter or leave empty and press [ENTER]: ");
+                String userInput = getUserInput();
+                if (!userInput.isBlank()) {
+                    searchParameterList.add(userInput);
                 }
             }
+            DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("HHmmddMMyyyy");
+            while (true) {
+                System.out.print("\nEnter search dates from/to (hhmmddmmyyyy-hhmmddmmyyyy) or leave empty and press [ENTER]. Usable shorthands: [lasthour], [today]: ");
+                String timeStamp = getUserInput();
+                if (timeStamp.isBlank()) {
+                    searchDateTimeFrom = null;
+                    searchDateTimeTo = null;
+                    break;
+                }
+                if (timeStamp.equals("lasthour")) {
+                    searchDateTimeFrom = LocalDateTime.now().minusHours(1);
+                    searchDateTimeTo = LocalDateTime.now();
+                    break;
+                }
+                if (timeStamp.equals("today")) {
+                    searchDateTimeFrom = LocalDate.now().atStartOfDay();
+                    searchDateTimeTo = LocalDateTime.now();
+                    break;
+                }
+                int fromStart = 0;
+                int fromEnd = 12;
+                int toStart = 13;
+                int toEnd = 25;
+                try {
+                    searchDateTimeFrom = LocalDateTime.parse(timeStamp.substring(fromStart, fromEnd), dateTimeFormatter);
+                    searchDateTimeTo = LocalDateTime.parse(timeStamp.substring(toStart, toEnd), dateTimeFormatter);
+                    if (searchDateTimeFrom.isBefore(searchDateTimeTo)) {
+                        break;
+                    } else throw new RuntimeException();
+                } catch (RuntimeException e) {
+                    System.out.print("\nError: invalid timestamp.");
+                }
+            }
+            System.out.print("\nSave messages to disk? Press [ENTER] to yes or any other key to no: ");
+            String userInput = getUserInput();
+            writeMessageToFile = userInput.isBlank();
+            messageCounter = 1;
+            foundMessageCounter = 0;
+            System.out.println(
+                    "\nQueue names to check: " + queueNameList +
+                            "\nSearch parameters: " + searchParameterList +
+                            "\nSearch from: " + (Objects.isNull(searchDateTimeFrom) ? "n/a" : searchDateTimeFrom.format(dateTimeFormatter)) +
+                            "\nSearch to: " + (Objects.isNull(searchDateTimeTo) ? "n/a" : searchDateTimeTo.format(dateTimeFormatter)) +
+                            "\nSave to disk: " + (writeMessageToFile ? "yes" : "no"));
+            for (String qName : queueNameList) {
+                queueManagerNameList.clear();
+                queueName = qName;
+                JsonNode qmgrListNode = qConfig.at("/" + queueName).get(qmgrArrayName);
+                for (JsonNode qmgrNode : qmgrListNode) {
+                    queueManagerNameList.add(qmgrNode.asText());
+                }
+                for (String qmgr : queueManagerNameList) {
+                    queueManagerName = qmgr;
+                    setConnectionProperties();
+                    System.out.print("\nChecking " + queueName + " on " + queueManagerName + "\n");
+                    browseQueue();
+                    if (!foundInQueue && !browseError) {
+                        System.out.println("\nNo matching message(s) found in the queue " + queueName + ".");
+                    }
+                }
+            }
+            System.out.print("\nTotal of " + foundMessageCounter + " matching message(s) found.");
         }
-        System.out.print("\nTotal of " + foundMessageCounter + " matching message(s) found.");
     }
 
     public static int getQueueDepth() throws MQException {
@@ -474,23 +491,26 @@ public final class MQSearch {
         if (!searchParamsFilled && !timeStampFilled) {
             displayMessage = true;
         }
+
         if (searchParamsFilled && !timeStampFilled) {
             for (String searchParameter : searchParameterList) {
-                if (messagePayload.contains(searchParameter)) {
+                if (messagePayload.toLowerCase().contains(searchParameter.toLowerCase())) {
                     fileNameParam.add(searchParameter);
                     displayMessage = true;
                 }
             }
         }
+
         if (!searchParamsFilled && timeStampFilled) {
             if (messageTimeStamp.isAfter(searchDateTimeFrom) && messageTimeStamp.isBefore(searchDateTimeTo)) {
                 displayMessage = true;
             }
         }
+
         if (searchParamsFilled && timeStampFilled) {
             if (messageTimeStamp.isAfter(searchDateTimeFrom) && messageTimeStamp.isBefore(searchDateTimeTo)) {
                 for (String searchParameter : searchParameterList) {
-                    if (messagePayload.contains(searchParameter)) {
+                    if (messagePayload.toLowerCase().contains(searchParameter.toLowerCase())) {
                         fileNameParam.add(searchParameter);
                         displayMessage = true;
                     }
@@ -503,7 +523,7 @@ public final class MQSearch {
 
             if (payloadIsJSON) {
                 messagePayload = messagePayload.substring(messagePayload.indexOf("{"));
-                System.out.print("\n" + prettyPrintJSON(messagePayload));
+                System.out.print("\n" + prettyPrintJSON(messagePayload) + "\n");
             }
 
             if (payloadIsXML) {
@@ -511,7 +531,7 @@ public final class MQSearch {
             }
 
             if (payloadIsRaw) {
-                System.out.println("\n" + messagePayload);
+                System.out.print("\n" + messagePayload + "\n");
             }
 
             if (writeMessageToFile) {
@@ -519,19 +539,23 @@ public final class MQSearch {
                 boolean isDirCreated = dir.mkdir();
                 DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSS");
                 String fileTimeStamp = dateTimeFormatter.format(messageTimeStamp);
+
                 if (!fileNameParam.isEmpty()) {
                     fileName = queueName + "_" + fileTimeStamp + "_" + fileNameParam.getFirst();
                 } else {
                     fileName = queueName + "_" + fileTimeStamp;
                 }
+
                 if (payloadIsXML) {
                     String filePath = workingDir + File.separator + fileName + XMLFileExtension;
                     writeFileToFS(filePath, prettyPrintXML(messagePayload));
                 }
+
                 if (payloadIsJSON) {
                     String filePath = workingDir + File.separator + fileName + JSONFileExtension;
                     writeFileToFS(filePath, prettyPrintJSON(messagePayload));
                 }
+
                 if (payloadIsRaw) {
                     String filePath = workingDir + File.separator + fileName + rawFileExtension;
                     writeFileToFS(filePath, messagePayload);
@@ -553,6 +577,12 @@ public final class MQSearch {
             }
         }
         return input;
+    }
+
+    public static void about() {
+        System.out.print("\nMQSearch " + release);
+        System.out.print("\nUsing IBM MQ classes for Java libraries " + clientLib);
+        System.out.print("\nSource: " + about);
     }
 
     public static void handleMQException(MQException e) {
