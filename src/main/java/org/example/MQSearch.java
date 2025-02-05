@@ -3,6 +3,7 @@ package org.example;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ibm.mq.*;
 import com.ibm.mq.constants.CMQC;
 import com.ibm.mq.constants.MQConstants;
@@ -25,6 +26,7 @@ import java.util.*;
 public final class MQSearch {
 
     static String queueName = "";
+    static int queueDepth = 0;
     static String queueManagerName = "";
     static List<String> queueNameList = new ArrayList<>();
     static List<String> queueManagerNameList = new ArrayList<>();
@@ -46,7 +48,7 @@ public final class MQSearch {
     static int foundMessageCounter = 0;
     static int addCounter = 0;
     static boolean foundInQueue;
-    static String release = "1.04 24-01-2025";
+    static String release = "1.09 04-02-2025";
     static String clientLib = "9.4.1.1";
     static String about = "https://github.com/honigschmidt/mqsearch";
     static String logo = "\n" +
@@ -60,6 +62,7 @@ public final class MQSearch {
     static final String JSONFileExtension = ".json";
     static final String rawFileExtension = ".txt";
     static String workingDir = System.getProperty("user.home") + File.separator + "MQSearchData";
+    static ObjectNode statNode = new ObjectMapper().createObjectNode();
 
     public static void main(String[] args) {
         env = defEnv;
@@ -283,6 +286,7 @@ public final class MQSearch {
     }
 
     public static void searchMessage() {
+        statNode.removeAll();
         if (queueNameList.isEmpty()) {
             System.out.print("\nError: no queues are selected.");
         } else {
@@ -296,11 +300,16 @@ public final class MQSearch {
             }
             DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("HHmmddMMyyyy");
             while (true) {
-                System.out.print("\nEnter search dates from/to (hhmmddmmyyyy-hhmmddmmyyyy) or leave empty and press [ENTER]. Usable shorthands: [lasthour], [today]: ");
+                System.out.print("\nEnter search dates from/to (hhmmddmmyyyy-hhmmddmmyyyy) or leave empty and press [ENTER]. Usable shorthands: [last15], [lasthour], [today]: ");
                 String timeStamp = getUserInput();
                 if (timeStamp.isBlank()) {
                     searchDateTimeFrom = null;
                     searchDateTimeTo = null;
+                    break;
+                }
+                if (timeStamp.equals("last15")) {
+                    searchDateTimeFrom = LocalDateTime.now().minusMinutes(15);
+                    searchDateTimeTo = LocalDateTime.now();
                     break;
                 }
                 if (timeStamp.equals("lasthour")) {
@@ -332,12 +341,7 @@ public final class MQSearch {
             writeMessageToFile = userInput.isBlank();
             messageCounter = 1;
             foundMessageCounter = 0;
-            System.out.println(
-                    "\nQueue names to check: " + queueNameList +
-                            "\nSearch parameters: " + searchParameterList +
-                            "\nSearch from: " + (Objects.isNull(searchDateTimeFrom) ? "n/a" : searchDateTimeFrom.format(dateTimeFormatter)) +
-                            "\nSearch to: " + (Objects.isNull(searchDateTimeTo) ? "n/a" : searchDateTimeTo.format(dateTimeFormatter)) +
-                            "\nSave to disk: " + (writeMessageToFile ? "yes" : "no"));
+            LocalDateTime searchStart = LocalDateTime.now();
             for (String qName : queueNameList) {
                 queueManagerNameList.clear();
                 queueName = qName;
@@ -348,19 +352,45 @@ public final class MQSearch {
                 for (String qmgr : queueManagerNameList) {
                     queueManagerName = qmgr;
                     setConnectionProperties();
-                    System.out.print("\nChecking " + queueName + " on " + queueManagerName + "\n");
-                    browseQueue();
-                    if (!foundInQueue && !browseError) {
-                        System.out.println("\nNo matching message(s) found in the queue " + queueName + ".");
+                    try {
+                        queueDepth = getQueueDepth();
+                    } catch (MQException e) {
+                        handleMQException(e);
+                    }
+                    System.out.print("\nChecking " + queueName + " (" + queueManagerName + "). Messages in queue: " + queueDepth + ".\n");
+                    if (queueDepth != 0) {
+                        browseQueue();
+                        if (!foundInQueue && !browseError) {
+                            System.out.println("\nNo matching message(s) found in the queue " + queueName + ".");
+                        }
+                    } else {
+                        String statNodeKey = queueName + " (" + queueManagerName + ")";
+                        statNode.put(statNodeKey, "queue empty");
                     }
                 }
             }
-            System.out.print("\nTotal of " + foundMessageCounter + " matching message(s) found.");
+            DateTimeFormatter logDateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss dd-MM-yyyy");
+            System.out.print(
+                "\n---" +
+                "\nEnvironment: " + env +
+                "\nSearch started at " + searchStart.format(logDateTimeFormatter) +
+                "\nSearch finished at " + LocalDateTime.now().format(logDateTimeFormatter) +
+                "\nSearch parameters: " + (searchParameterList.isEmpty() ? "n/a" : searchParameterList) +
+                "\nSearch from: " + (Objects.isNull(searchDateTimeFrom) ? "n/a" : searchDateTimeFrom.format(dateTimeFormatter)) +
+                "\nSearch to: " + (Objects.isNull(searchDateTimeTo) ? "n/a" : searchDateTimeTo.format(dateTimeFormatter)) +
+                "\nSave to disk: " + (writeMessageToFile ? "yes" : "no"));
+            System.out.print("\n\nMatching message(s) found per queue:\n");
+            Iterator<String> statNodeIterator = statNode.fieldNames();
+            statNodeIterator.forEachRemaining(qName -> {
+                System.out.print("\n" + qName + ": " + statNode.get(qName).asText());
+            });
+            System.out.print("\n\nTotal of " + foundMessageCounter + " matching message(s) found.");
+            System.out.println("\n---");
         }
     }
 
     public static int getQueueDepth() throws MQException {
-        MQQueueManager queueManager = new MQQueueManager(queueManagerName);
+        MQQueueManager queueManager = new MQQueueManager(queueManagerName, qmgrProperties);
         int queueOpenOptions = MQConstants.MQOO_INQUIRE;
         MQQueue queue = queueManager.accessQueue(queueName, queueOpenOptions);
         int queueDepth = queue.getCurrentDepth();
@@ -415,6 +445,12 @@ public final class MQSearch {
     public static void browseQueue() {
         foundInQueue = false;
         browseError = false;
+        int getCount = 1;
+        try {
+            int qDepth = getQueueDepth();
+        } catch (MQException e) {
+            handleMQException(e);
+        }
         try {
             boolean isFirstMessage = true;
             boolean isDone = false;
@@ -564,6 +600,19 @@ public final class MQSearch {
             messageCounter++;
             foundMessageCounter++;
             foundInQueue = true;
+        }
+        String statNodeKey = queueName + " (" + queueManagerName + ")";
+        if (statNode.has(statNodeKey)) {
+            if (displayMessage) {
+                int numberOfMessages = statNode.get(statNodeKey).asInt();
+                statNode.put(statNodeKey, numberOfMessages + 1);
+            }
+        } else {
+            if (displayMessage) {
+                statNode.put(statNodeKey, 1);
+            } else {
+                statNode.put(statNodeKey, 0);
+            }
         }
     }
 
